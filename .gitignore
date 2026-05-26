@@ -4,6 +4,10 @@ bin-release/
 [Oo]bj/
 [Bb]in/
 
+# IDE / editor metadata (JetBrains, VS Code, etc.)
+.idea/
+.vscode/
+
 # Other files and folders
 .settings/
 
