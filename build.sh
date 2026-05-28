@@ -11,6 +11,10 @@
 #       signed build starts clean. Non-interactive runs default to KEEP
 #       unless --force-reset is passed.
 #   4. install the resulting AltTab.app into /Applications (fallback: ~/Applications)
+#   4.5 write the same keychain + UserDefaults entries the in-app Debug "Pro" QA
+#       button creates, so the locally-built Debug binary boots straight into
+#       Pro state without ever showing the activation window. Only meaningful
+#       for Debug builds — `mockProUser()` is #if DEBUG.
 #
 # Usage:
 #   ./bootstrap_alt_tab.sh
@@ -57,7 +61,7 @@ warn() { printf "\033[1;33m[bootstrap]\033[0m %s\n" "$*" >&2; }
 die()  { printf "\033[1;31m[bootstrap]\033[0m %s\n" "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,34p' "$0"
+  sed -n '2,38p' "$0"
   exit 0
 }
 
@@ -456,6 +460,79 @@ else
   fi
 fi
 
+# ----- step 4.5 (optional): flip Debug build to mock-Pro state -----
+# Background: AltTab's #if DEBUG QA menu has a "Pro" button that calls
+# LicenseManager.mockProUser() — see src/pro/license/LicenseManager.swift.
+# That function writes:
+#   • Keychain (service = "<bundle-id>.license"):
+#       account=licenseKey  → "MOCK-PRO-LICENSE-KEY"
+#       account=instanceId  → "mock-instance-id"
+#   • UserDefaults suite "<bundle-id>.license":
+#       lastValidation        = <now epoch>
+#       lastValidationResult  = true (BOOL)
+#       customerEmail         = "john@cool-software.com"
+#
+# On next launch, LicenseManager.computeState() sees licenseKey present +
+# lastValidationResult==true → state = .pro → no activation window.
+#
+# Notes:
+#   • Only meaningful for Debug builds. Release strips the entire #if DEBUG
+#     code path; the flags would still set state=.pro at startup, but there
+#     is no QA menu / paywall flow to begin with on Release in this repo.
+#   • Idempotent: re-running just refreshes the timestamp.
+#   • To remove an already-applied mock-Pro state, see the cleanup commands
+#     printed in the final notes (security delete-generic-password +
+#     defaults delete).
+mock_pro_license() {
+  local svc="${BUNDLE_ID}.license"
+  local suite="${BUNDLE_ID}.license"
+
+  log "Applying mock-Pro state (matches the Debug QA menu's 'Pro' button)…"
+
+  # Keychain entries. -U updates if the item already exists. -A would allow
+  # any app to read it without prompting; we omit it on purpose so only
+  # AltTab itself (running as the same user) can read these — same security
+  # posture as the in-app code path.
+  if ! security add-generic-password \
+        -U \
+        -s "$svc" \
+        -a "licenseKey" \
+        -w "MOCK-PRO-LICENSE-KEY" \
+        2>/dev/null; then
+    warn "Failed to write keychain item licenseKey for $svc."
+    warn "  You may need to unlock the login keychain and retry, or run:"
+    warn "    security unlock-keychain ~/Library/Keychains/login.keychain-db"
+    return 1
+  fi
+  if ! security add-generic-password \
+        -U \
+        -s "$svc" \
+        -a "instanceId" \
+        -w "mock-instance-id" \
+        2>/dev/null; then
+    warn "Failed to write keychain item instanceId for $svc."
+    return 1
+  fi
+
+  # UserDefaults entries (the suite is a separate plist under
+  # ~/Library/Preferences/<suite>.plist).
+  defaults write "$suite" lastValidation       -float "$(date +%s)"
+  defaults write "$suite" lastValidationResult -bool  YES
+  defaults write "$suite" customerEmail        -string "john@cool-software.com"
+
+  log "  keychain[licenseKey]   = MOCK-PRO-LICENSE-KEY"
+  log "  keychain[instanceId]   = mock-instance-id"
+  log "  defaults[lastValidationResult] = YES"
+  log "Mock-Pro applied. AltTab will boot straight into Pro state."
+}
+
+if [[ "$CONFIG" != "Debug" ]]; then
+  warn "Auto-Pro is unconditional but build configuration is '$CONFIG' (not Debug)."
+  warn "  mockProUser() is wrapped in #if DEBUG; flags will be set anyway,"
+  warn "  but Release binaries don't show the activation flow this targets."
+fi
+mock_pro_license || warn "Auto-Pro setup hit an error; falling back to normal trial flow."
+
 # ----- final notes -----
 cat <<EOF
 
@@ -482,3 +559,13 @@ cat <<EOF
       Pass --no-update to skip the git pull and build current HEAD.
 ──────────────────────────────────────────────
 EOF
+
+if [[ "$CONFIG" == "Debug" ]]; then
+  cat <<EOF
+  Pro state was activated automatically. The activation window will not appear.
+  To revert to the normal trial flow on this machine:
+    security delete-generic-password -s "${BUNDLE_ID}.license" -a licenseKey
+    security delete-generic-password -s "${BUNDLE_ID}.license" -a instanceId
+    defaults delete "${BUNDLE_ID}.license"
+EOF
+fi

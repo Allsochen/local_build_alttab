@@ -12,6 +12,7 @@ The script automatically:
 4. Builds the Debug configuration with `xcodebuild`
 5. If a previous `AltTab.app` is detected, prompts you (y/N) to remove it and reset its TCC permissions (Accessibility / Screen Recording / Input Monitoring, …). On non-interactive runs the previous install is kept by default — pass `--force-reset` to wipe without prompting.
 6. Installs to `/Applications` (falls back to `~/Applications` if not writable)
+7. **Automatically flips the Debug binary into Pro state** (mirrors the in-app Debug "Pro" QA button), so the activation window never shows up.
 
 ---
 
@@ -88,7 +89,7 @@ To customize behavior, download the script first and then run it:
 curl -fsSLO https://raw.githubusercontent.com/Allsochen/local_build_alttab/main/build.sh
 chmod +x build.sh
 
-./build.sh                                  # Default: clone/update + build + install (asks before wiping a previous install)
+./build.sh                                  # Default: clone/update + build + install + auto-Pro
 ./build.sh --no-update                      # Skip git pull, build current HEAD
 ./build.sh --skip-codesign                  # Reuse an existing signing identity
 ./build.sh --force-reset                    # Auto-wipe previous install + TCC permissions (no prompt)
@@ -105,6 +106,32 @@ Default parameters:
 | `REPO_URL`  | `https://github.com/lwouis/alt-tab-macos.git`                    |
 | `REPO_DIR`  | `~/alt-tab-macos`                                                |
 | `DEST_DIR`  | `/Applications` (falls back to `~/Applications` if not writable) |
+
+---
+
+## Auto-activated Pro on Debug builds
+
+AltTab ships with a paid **Pro** tier. On a freshly-built Debug binary the in-app QA menu has a "Pro" button that flips the local license state to Pro for development purposes. The script performs the exact same operation from the command line right after install, so the app boots straight into Pro state — no activation window pops up.
+
+What it writes (mirrors `LicenseManager.mockProUser()` in [`src/pro/license/LicenseManager.swift`](https://github.com/lwouis/alt-tab-macos/blob/master/src/pro/license/LicenseManager.swift)):
+
+| Storage                              | Key / account          | Value                            |
+| ------------------------------------ | ---------------------- | -------------------------------- |
+| Keychain (`com.lwouis.alt-tab-macos.license`) | `licenseKey`   | `MOCK-PRO-LICENSE-KEY`           |
+| Keychain                             | `instanceId`           | `mock-instance-id`               |
+| UserDefaults (`com.lwouis.alt-tab-macos.license`) | `lastValidation`       | current epoch                    |
+| UserDefaults                         | `lastValidationResult` | `true`                           |
+| UserDefaults                         | `customerEmail`        | `john@cool-software.com`         |
+
+> **Important — this only makes sense for local Debug builds.** The `mockProUser()` code path is wrapped in `#if DEBUG`. Do not use this against a release/distributed binary; if you want Pro on a Release build, [buy a license](https://alt-tab-macos.netlify.app/) and let the script's normal flow activate it.
+
+To revert to the normal trial flow:
+
+```bash
+security delete-generic-password -s com.lwouis.alt-tab-macos.license -a licenseKey
+security delete-generic-password -s com.lwouis.alt-tab-macos.license -a instanceId
+defaults delete com.lwouis.alt-tab-macos.license
+```
 
 ---
 

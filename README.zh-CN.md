@@ -12,6 +12,7 @@
 4. 使用 `xcodebuild` 构建 Debug 版本
 5. 如果检测到旧的 `AltTab.app`，会弹出确认（y/N）询问是否删除并重置其系统授权（辅助功能 / 屏幕录制 / 输入监控等）；非交互式（如管道）下默认保留，传 `--force-reset` 可强制清理
 6. 安装到 `/Applications`（不可写则回退到 `~/Applications`）
+7. **自动把 Debug 构建切到 Pro 状态**（与应用内 Debug QA 菜单里的 "Pro" 按钮一致），启动后不会弹激活窗口
 
 ---
 
@@ -88,7 +89,7 @@ curl -fsSL https://raw.githubusercontent.com/Allsochen/local_build_alttab/main/b
 curl -fsSLO https://raw.githubusercontent.com/Allsochen/local_build_alttab/main/build.sh
 chmod +x build.sh
 
-./build.sh                                  # 默认：克隆/更新 + 构建 + 安装（发现旧版会弹出确认）
+./build.sh                                  # 默认：克隆/更新 + 构建 + 安装 + 自动激活 Pro
 ./build.sh --no-update                      # 不执行 git pull，构建当前 HEAD
 ./build.sh --skip-codesign                  # 复用已有签名身份
 ./build.sh --force-reset                    # 直接清理旧版本及其授权（不弹确认）
@@ -105,6 +106,32 @@ chmod +x build.sh
 | `REPO_URL`  | `https://github.com/lwouis/alt-tab-macos.git`       |
 | `REPO_DIR`  | `~/alt-tab-macos`                                   |
 | `DEST_DIR`  | `/Applications`（无写权限则回退到 `~/Applications`） |
+
+---
+
+## Debug 构建自动激活 Pro
+
+AltTab 有付费的 **Pro** 功能。在 Debug 构建里，应用内有一个 QA 菜单，点击其中的 "Pro" 按钮会把本地 license 状态切到 Pro，便于开发者调试。脚本会在安装完成后自动完成同样的操作——app 启动时直接进入 Pro 状态，激活窗口不再弹出。
+
+它写入的内容（与源码 [`src/pro/license/LicenseManager.swift`](https://github.com/lwouis/alt-tab-macos/blob/master/src/pro/license/LicenseManager.swift) 中的 `mockProUser()` 一一对应）：
+
+| 存储位置                                          | Key / account          | 值                              |
+| ------------------------------------------------- | ---------------------- | ------------------------------- |
+| Keychain（`com.lwouis.alt-tab-macos.license`）    | `licenseKey`           | `MOCK-PRO-LICENSE-KEY`          |
+| Keychain                                          | `instanceId`           | `mock-instance-id`              |
+| UserDefaults（`com.lwouis.alt-tab-macos.license`）| `lastValidation`       | 当前 epoch 时间戳               |
+| UserDefaults                                      | `lastValidationResult` | `true`                          |
+| UserDefaults                                      | `customerEmail`        | `john@cool-software.com`        |
+
+> **重要：仅适用于本地 Debug 构建。** `mockProUser()` 被 `#if DEBUG` 包裹，Release 构建里这条路径根本不存在。请**不要**对正式分发的 binary 做这件事；如果你需要在 Release 上使用 Pro，请[购买正版 license](https://alt-tab-macos.netlify.app/)。
+
+撤销 mock Pro 状态：
+
+```bash
+security delete-generic-password -s com.lwouis.alt-tab-macos.license -a licenseKey
+security delete-generic-password -s com.lwouis.alt-tab-macos.license -a instanceId
+defaults delete com.lwouis.alt-tab-macos.license
+```
 
 ---
 
